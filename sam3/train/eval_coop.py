@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import torch
+from PIL import Image, ImageDraw
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -68,6 +69,8 @@ def parse_args():
                         help="Directory to save evaluation results")
     parser.add_argument("--save_predictions", action="store_true",
                         help="Save predictions to JSON file")
+    parser.add_argument("--save_samples", type=int, default=0,
+                        help="Number of sample images to save with boxes (0 = none)")
     
     # Device
     parser.add_argument("--device", type=str, default="cuda",
@@ -129,6 +132,37 @@ def xyxy_to_yolo(boxes: torch.Tensor) -> torch.Tensor:
     w = x2 - x1
     h = y2 - y1
     return torch.stack([cx, cy, w, h], dim=1)
+
+
+def draw_sample_image(
+    image_path: str,
+    pred_boxes: torch.Tensor,
+    pred_scores: torch.Tensor,
+    gt_boxes: torch.Tensor,
+    output_path: Path,
+):
+    """Draw GT (green) and pred (red) boxes on image and save."""
+    img = Image.open(image_path).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    w, h = img.size
+    
+    # Draw GT boxes in green
+    for box in gt_boxes:
+        cx, cy, bw, bh = box.tolist()
+        x1, y1 = int((cx - bw/2) * w), int((cy - bh/2) * h)
+        x2, y2 = int((cx + bw/2) * w), int((cy + bh/2) * h)
+        draw.rectangle([x1, y1, x2, y2], outline="green", width=3)
+        draw.text((x1, y1 - 12), "GT", fill="green")
+    
+    # Draw pred boxes in red with scores
+    for box, score in zip(pred_boxes, pred_scores):
+        cx, cy, bw, bh = box.tolist()
+        x1, y1 = int((cx - bw/2) * w), int((cy - bh/2) * h)
+        x2, y2 = int((cx + bw/2) * w), int((cy + bh/2) * h)
+        draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+        draw.text((x1, y2 + 2), f"{score:.2f}", fill="red")
+    
+    img.save(output_path)
 
 
 def compute_ap(recalls: List[float], precisions: List[float]) -> float:
@@ -277,17 +311,14 @@ def evaluate_coop(
     dataloader: DataLoader,
     device: str,
     confidence_threshold: float = 0.3,
+    save_samples: int = 0,
+    output_dir: Optional[Path] = None,
 ) -> Tuple[Dict[str, float], List[Dict]]:
-    """
-    Evaluate the CoOp model on a dataset.
-    
-    Returns:
-        metrics: Dictionary of evaluation metrics
-        predictions: List of predictions per image
-    """
+    """Evaluate the CoOp model on a dataset."""
     model.eval()
     evaluator = DetectionEvaluator()
     predictions = []
+    samples_saved = 0
     
     for batch in tqdm(dataloader, desc="Evaluating"):
         images = batch["images"].to(device)
@@ -334,6 +365,19 @@ def evaluate_coop(
                 "pred_scores": pred_score.cpu().tolist(),
                 "gt_boxes": gt_box.cpu().tolist(),
             })
+            
+            # Save sample images
+            if save_samples > 0 and samples_saved < save_samples and output_dir:
+                sample_path = output_dir / "samples" / f"sample_{samples_saved:03d}.jpg"
+                sample_path.parent.mkdir(parents=True, exist_ok=True)
+                draw_sample_image(
+                    batch["image_paths"][b],
+                    pred_box.cpu(),
+                    pred_score.cpu(),
+                    gt_box.cpu(),
+                    sample_path,
+                )
+                samples_saved += 1
     
     metrics = evaluator.compute_metrics()
     return metrics, predictions
@@ -472,6 +516,8 @@ def main():
             dataloader=dataloader,
             device=args.device,
             confidence_threshold=args.confidence_threshold,
+            save_samples=args.save_samples,
+            output_dir=output_dir,
         )
     
     # Print results
