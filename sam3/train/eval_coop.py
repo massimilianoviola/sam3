@@ -45,8 +45,8 @@ def parse_args():
                         help="Path to YOLO format dataset")
     parser.add_argument("--split", type=str, default="VAL",
                         help="Data split to evaluate on")
-    parser.add_argument("--class_name", type=str, default="A fallen bottle",
-                        help="Class name for the prompt")
+    parser.add_argument("--class_name", type=str, required=True,
+                        help="Class name for the prompt (e.g., 'Fire', 'A fallen bottle')")
     
     # Model arguments
     parser.add_argument("--coop_weights", type=str, default=None,
@@ -189,11 +189,8 @@ def compute_ap(recalls: List[float], precisions: List[float]) -> float:
 class DetectionEvaluator:
     """Evaluator for object detection with standard metrics."""
     
-    def __init__(self, iou_thresholds: List[float] = None):
-        if iou_thresholds is None:
-            # mAP@0.5:0.95 with step 0.05
-            iou_thresholds = [0.5 + 0.05 * i for i in range(10)]
-        self.iou_thresholds = iou_thresholds
+    def __init__(self, iou_threshold: float = 0.5):
+        self.iou_threshold = iou_threshold
         self.reset()
     
     def reset(self):
@@ -237,7 +234,7 @@ class DetectionEvaluator:
             best_gt_idx = pred_ious.argmax().item()
             best_iou = pred_ious[best_gt_idx].item()
             
-            if best_iou >= 0.5 and not gt_matched[best_gt_idx]:
+            if best_iou >= self.iou_threshold and not gt_matched[best_gt_idx]:
                 # True positive
                 gt_matched[best_gt_idx] = True
                 self.all_detections.append((pred_scores[pred_idx].item(), True, best_iou))
@@ -311,12 +308,13 @@ def evaluate_coop(
     dataloader: DataLoader,
     device: str,
     confidence_threshold: float = 0.3,
+    iou_threshold: float = 0.5,
     save_samples: int = 0,
     output_dir: Optional[Path] = None,
 ) -> Tuple[Dict[str, float], List[Dict]]:
     """Evaluate the CoOp model on a dataset."""
     model.eval()
-    evaluator = DetectionEvaluator()
+    evaluator = DetectionEvaluator(iou_threshold=iou_threshold)
     predictions = []
     samples_saved = 0
     
@@ -389,6 +387,9 @@ def evaluate_baseline(
     class_name: str,
     device: str,
     confidence_threshold: float = 0.3,
+    iou_threshold: float = 0.5,
+    save_samples: int = 0,
+    output_dir: Path = None,
 ) -> Tuple[Dict[str, float], List[Dict]]:
     """
     Evaluate the baseline SAM3 model (without CoOp, using original text prompt).
@@ -401,8 +402,15 @@ def evaluate_baseline(
     processor = Sam3Processor(model, confidence_threshold=confidence_threshold)
     print(f"Using text prompt: '{class_name}'")
     
-    evaluator = DetectionEvaluator()
+    evaluator = DetectionEvaluator(iou_threshold=iou_threshold)
     predictions = []
+    
+    # Create samples directory if needed
+    if save_samples > 0 and output_dir:
+        (output_dir / "samples").mkdir(exist_ok=True)
+        print(f"Saving {save_samples} sample images to {output_dir / 'samples'}")
+    
+    saved_count = 0
     
     for batch in tqdm(dataloader, desc="Evaluating baseline"):
         gt_boxes = batch["boxes"]  # [B, max_boxes, 4] - YOLO format
@@ -427,10 +435,13 @@ def evaluate_baseline(
                 pred_score = state["scores"]  # [N]
                 
                 # Convert to normalized YOLO format
-                pred_box = pred_box / processor.resolution
-                pred_box = xyxy_to_yolo(pred_box)
+                # pred_box is in absolute pixels [x1, y1, x2, y2]
+                w, h = raw_image.size
+                scale = torch.tensor([w, h, w, h], device=device)
+                pred_box_norm = pred_box / scale
+                pred_box_yolo = xyxy_to_yolo(pred_box_norm)
             else:
-                pred_box = torch.zeros((0, 4), device=device)
+                pred_box_yolo = torch.zeros((0, 4), device=device)
                 pred_score = torch.zeros((0,), device=device)
             
             # Get GT boxes for this image
@@ -438,15 +449,28 @@ def evaluate_baseline(
             gt_box = gt_boxes[b, :n_gt].to(device)  # [n_gt, 4]
             
             # Update evaluator
-            evaluator.update(pred_box, pred_score, gt_box)
+            evaluator.update(pred_box_yolo, pred_score, gt_box)
             
             # Store predictions
             predictions.append({
                 "image_path": batch["image_paths"][b],
-                "pred_boxes": pred_box.cpu().tolist(),
+                "pred_boxes": pred_box_yolo.cpu().tolist(),
                 "pred_scores": pred_score.cpu().tolist(),
                 "gt_boxes": gt_box.cpu().tolist(),
             })
+            
+            # Save sample visualization
+            if save_samples > 0 and saved_count < save_samples:
+                sample_path = output_dir / "samples" / f"sample_{saved_count:03d}.jpg"
+                
+                draw_sample_image(
+                    image_path=image_paths[b],
+                    gt_boxes=gt_box.cpu().numpy(),
+                    pred_boxes=pred_box_yolo.cpu().numpy(),
+                    pred_scores=pred_score.cpu().numpy(),
+                    output_path=sample_path
+                )
+                saved_count += 1
     
     metrics = evaluator.compute_metrics()
     return metrics, predictions
@@ -495,6 +519,9 @@ def main():
             class_name=args.class_name,
             device=args.device,
             confidence_threshold=args.confidence_threshold,
+            iou_threshold=args.iou_threshold,
+            save_samples=args.save_samples,
+            output_dir=output_dir,
         )
     else:
         # Build CoOp model
@@ -518,6 +545,7 @@ def main():
             dataloader=dataloader,
             device=args.device,
             confidence_threshold=args.confidence_threshold,
+            iou_threshold=args.iou_threshold,
             save_samples=args.save_samples,
             output_dir=output_dir,
         )

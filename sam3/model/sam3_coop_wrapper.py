@@ -201,7 +201,7 @@ class Sam3CoOpDetector(nn.Module):
 
 
 def build_sam3_coop_detector(
-    class_name: str = "fallen bottle",
+    class_name: str,
     n_ctx: int = 8,
     ctx_init: Optional[str] = None,
     class_token_position: str = "end",
@@ -212,7 +212,7 @@ def build_sam3_coop_detector(
     Build SAM3 CoOp detector with learnable prompts.
     
     Args:
-        class_name: Class name to embed (e.g., "fallen bottle")
+        class_name: Class name to embed (e.g., "Fire", "fallen bottle")
         n_ctx: Number of learnable context tokens
         ctx_init: Optional initialization text
         class_token_position: Where to place class token

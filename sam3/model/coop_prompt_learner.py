@@ -35,11 +35,11 @@ class CoOpPromptLearner(nn.Module):
     
     def __init__(
         self,
+        class_name: str,
+        tokenizer,
+        token_embedding: nn.Embedding,
         n_ctx: int = 8,
         ctx_dim: int = 1024,
-        class_name: str = "fallen bottle",
-        tokenizer = None,
-        token_embedding: nn.Embedding = None,
         ctx_init: Optional[str] = None,
         class_token_position: str = "end",
     ):

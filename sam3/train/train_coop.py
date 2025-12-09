@@ -46,8 +46,8 @@ def parse_args():
                         help="Path to YOLO format dataset")
     parser.add_argument("--limit", type=int, default=None,
                         help="Limit dataset size for testing (e.g., 5)")
-    parser.add_argument("--class_name", type=str, default="A fallen bottle",
-                        help="Class name for the prompt")
+    parser.add_argument("--class_name", type=str, required=True,
+                        help="Class name for the prompt (e.g., 'Fire', 'A fallen bottle')")
     
     # CoOp arguments
     parser.add_argument("--n_ctx", type=int, default=8,
