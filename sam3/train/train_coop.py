@@ -660,6 +660,12 @@ def main():
         eta_min=args.lr * 0.01,
     )
     
+    # Fast-forward scheduler if resuming from later epoch
+    if args.start_epoch > 1:
+        for _ in range(args.start_epoch - 1 - args.warmup_epochs):
+            scheduler.step()
+        print(f"Scheduler advanced to epoch {args.start_epoch}, LR: {scheduler.get_last_lr()[0]:.5f}")
+    
     # Training loop
     best_val_loss = float("inf")
     print("\nStarting training...")
