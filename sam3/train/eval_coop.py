@@ -399,22 +399,24 @@ def evaluate_baseline(
     # Build model
     model = build_sam3_image_model(device=device, eval_mode=True)
     processor = Sam3Processor(model, confidence_threshold=confidence_threshold)
+    print(f"Using text prompt: '{class_name}'")
     
     evaluator = DetectionEvaluator()
     predictions = []
     
     for batch in tqdm(dataloader, desc="Evaluating baseline"):
-        images = batch["images"]  # Already transformed [B, 3, H, W]
         gt_boxes = batch["boxes"]  # [B, max_boxes, 4] - YOLO format
         num_boxes = batch["num_boxes"]  # [B]
-        batch_size = images.size(0)
+        image_paths = batch["image_paths"]
+        batch_size = len(image_paths)
         
-        # Process each image individually (processor expects single image)
+        # Process each image individually (processor expects raw image)
         for b in range(batch_size):
-            image = images[b].to(device)
+            # Load raw image from disk (processor applies its own transforms)
+            raw_image = Image.open(image_paths[b]).convert("RGB")
             
             # Set image
-            state = processor.set_image(image.unsqueeze(0).to(device))
+            state = processor.set_image(raw_image)
             
             # Set text prompt
             state = processor.set_text_prompt(class_name, state)
@@ -529,7 +531,7 @@ def main():
     print(f"  F1 Score:     {metrics['f1']:.4f}")
     print(f"  AP@0.5:       {metrics['ap50']:.4f}")
     print(f"  Avg IoU:      {metrics['avg_iou']:.4f}")
-    print(f"  Matched:      {metrics['num_matched']}/{metrics['total_gt']} GT boxes")
+    print(f"  Matched:      {metrics.get('num_matched', 0)}/{metrics['total_gt']} GT boxes")
     print(f"  Predictions:  {metrics['total_pred']} total")
     print("=" * 60)
     
