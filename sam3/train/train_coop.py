@@ -87,6 +87,8 @@ def parse_args():
                         help="Directory to save checkpoints")
     parser.add_argument("--save_freq", type=int, default=10,
                         help="Save checkpoint every N epochs")
+    parser.add_argument("--eval_freq", type=int, default=5,
+                        help="Run validation every N epochs")
     
     # Device arguments
     parser.add_argument("--device", type=str, default="cuda",
@@ -97,6 +99,12 @@ def parse_args():
     # SAM3 checkpoint
     parser.add_argument("--sam3_checkpoint", type=str, default=None,
                         help="Optional path to SAM3 checkpoint (defaults to HuggingFace)")
+    
+    # Resume training
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to CoOp checkpoint to resume training from")
+    parser.add_argument("--start_epoch", type=int, default=1,
+                        help="Starting epoch (use with --resume)")
     
     return parser.parse_args()
 
@@ -584,6 +592,11 @@ def main():
         device=args.device,
     )
     
+    # Resume from checkpoint if provided
+    if args.resume:
+        print(f"Resuming from checkpoint: {args.resume}")
+        model.load_coop_weights(args.resume)
+    
     # Create loss function
     loss_fn = SAM3DetectionLoss(
         loss_bbox=args.loss_bbox,
@@ -651,7 +664,7 @@ def main():
     best_val_loss = float("inf")
     print("\nStarting training...")
     
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(args.start_epoch, args.epochs + 1):
         start_time = time.time()
         
         # Train
@@ -660,8 +673,11 @@ def main():
             epoch, args.warmup_epochs, args.lr
         )
         
-        # Validate
-        val_losses = validate(model, val_loader, loss_fn, args.device)
+        # Validate (every eval_freq epochs or last epoch)
+        if epoch % args.eval_freq == 0 or epoch == args.epochs:
+            val_losses = validate(model, val_loader, loss_fn, args.device)
+        else:
+            val_losses = None
         
         # Update scheduler (after warmup)
         if epoch >= args.warmup_epochs:
@@ -672,11 +688,12 @@ def main():
         
         print(f"Epoch {epoch}/{args.epochs}")
         print(f"  Train: loss={train_losses['loss']:.3f} (b:{train_losses['loss_bbox']:.2f} g:{train_losses['loss_giou']:.2f} c:{train_losses['loss_cls']:.3f}) | P:{train_losses['precision']:.3f} R:{train_losses['recall']:.3f} IoU:{train_losses['avg_iou']:.2f}")
-        print(f"  Val:   loss={val_losses['loss']:.3f} (b:{val_losses['loss_bbox']:.2f} g:{val_losses['loss_giou']:.2f} c:{val_losses['loss_cls']:.3f}) | P:{val_losses['precision']:.3f} R:{val_losses['recall']:.3f} IoU:{val_losses['avg_iou']:.2f}")
+        if val_losses:
+            print(f"  Val:   loss={val_losses['loss']:.3f} (b:{val_losses['loss_bbox']:.2f} g:{val_losses['loss_giou']:.2f} c:{val_losses['loss_cls']:.3f}) | P:{val_losses['precision']:.3f} R:{val_losses['recall']:.3f} IoU:{val_losses['avg_iou']:.2f}")
         print(f"  LR: {current_lr:.5f} | Time: {epoch_time:.1f}s")
         
         # Save best model
-        if val_losses["loss"] < best_val_loss:
+        if val_losses and val_losses["loss"] < best_val_loss:
             best_val_loss = val_losses["loss"]
             model.save_coop_weights(output_dir / "best_coop.pth")
             print(f"  ✓ New best model saved!")
