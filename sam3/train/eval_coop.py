@@ -47,8 +47,6 @@ def parse_args():
                         help="Data split to evaluate on")
     parser.add_argument("--class_name", type=str, required=True,
                         help="Class name for the prompt (e.g., 'Fire', 'A fallen bottle')")
-    parser.add_argument("--split_file", type=str, default=None,
-                        help="Optional JSON file defining train/val/test splits")
     
     # Model arguments
     parser.add_argument("--coop_weights", type=str, default=None,
@@ -329,13 +327,7 @@ def evaluate_coop(
         num_boxes = batch["num_boxes"]  # [B]
         batch_size = images.size(0)
         
-        # Forward pass
-        # DEBUG: Pass targets to see if it improves results (Simulate training validation)
-        targets = {
-            "boxes": gt_boxes.to(device),
-            "num_boxes": num_boxes.to(device),
-        }
-        outputs = model(images, targets)
+        outputs = model(images)
         
         # Extract predictions
         pred_boxes = outputs.get("pred_boxes")  # [B, num_queries, 4] - cx, cy, w, h
