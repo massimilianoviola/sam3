@@ -113,7 +113,7 @@ class Sam3CoOpDetector(nn.Module):
         out = self.sam3.forward_grounding(
             backbone_out=backbone_out,
             find_input=find_input,
-            find_target=targets,
+            find_target=None,
             geometric_prompt=geometric_prompt,
         )
         

@@ -292,7 +292,7 @@ class SAM3DetectionLoss(nn.Module):
         # Normalize
         loss_bbox = loss_bbox / total_num_boxes
         loss_giou = loss_giou / total_num_boxes
-        loss_cls = loss_cls / (batch_size * num_queries)  # Normalize by total predictions
+        loss_cls = loss_cls / total_num_boxes  # Normalize by GT count (standard DETR practice)
         
         # Total weighted loss
         total_loss = (

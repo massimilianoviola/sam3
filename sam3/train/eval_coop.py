@@ -47,6 +47,8 @@ def parse_args():
                         help="Data split to evaluate on")
     parser.add_argument("--class_name", type=str, required=True,
                         help="Class name for the prompt (e.g., 'Fire', 'A fallen bottle')")
+    parser.add_argument("--split_file", type=str, default=None,
+                        help="Optional JSON file defining train/val/test splits")
     
     # Model arguments
     parser.add_argument("--coop_weights", type=str, default=None,
@@ -69,6 +71,8 @@ def parse_args():
                         help="Directory to save evaluation results")
     parser.add_argument("--save_predictions", action="store_true",
                         help="Save predictions to JSON file")
+    parser.add_argument("--save_txt", action="store_true",
+                        help="Save predictions to TXT files (YOLO format)")
     parser.add_argument("--save_samples", type=int, default=0,
                         help="Number of sample images to save with boxes (0 = none)")
     
@@ -310,6 +314,7 @@ def evaluate_coop(
     confidence_threshold: float = 0.3,
     iou_threshold: float = 0.5,
     save_samples: int = 0,
+    save_txt: bool = False,
     output_dir: Optional[Path] = None,
 ) -> Tuple[Dict[str, float], List[Dict]]:
     """Evaluate the CoOp model on a dataset."""
@@ -325,7 +330,12 @@ def evaluate_coop(
         batch_size = images.size(0)
         
         # Forward pass
-        outputs = model(images)
+        # DEBUG: Pass targets to see if it improves results (Simulate training validation)
+        targets = {
+            "boxes": gt_boxes.to(device),
+            "num_boxes": num_boxes.to(device),
+        }
+        outputs = model(images, targets)
         
         # Extract predictions
         pred_boxes = outputs.get("pred_boxes")  # [B, num_queries, 4] - cx, cy, w, h
@@ -342,7 +352,7 @@ def evaluate_coop(
             # Handle presence token if available
             if "presence_logit_dec" in outputs:
                 presence = outputs["presence_logit_dec"][b].sigmoid()
-                pred_score = pred_score * presence
+                # pred_score = pred_score * presence
             
             # Filter by confidence
             keep = pred_score > confidence_threshold
@@ -376,6 +386,17 @@ def evaluate_coop(
                     sample_path,
                 )
                 samples_saved += 1
+            
+            # Save TXT predictions
+            if save_txt and output_dir:
+                label_dir = output_dir / "labels"
+                label_dir.mkdir(parents=True, exist_ok=True)
+                txt_path = label_dir / f"{Path(batch['image_paths'][b]).stem}.txt"
+                with open(txt_path, "w") as f:
+                    for box, score in zip(pred_box.cpu(), pred_score.cpu()):
+                        cx, cy, w, h = box.tolist()
+                        # Format: class_id score cx cy w h
+                        f.write(f"0 {score:.6f} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n")
     
     metrics = evaluator.compute_metrics()
     return metrics, predictions
@@ -389,6 +410,7 @@ def evaluate_baseline(
     confidence_threshold: float = 0.3,
     iou_threshold: float = 0.5,
     save_samples: int = 0,
+    save_txt: bool = False,
     output_dir: Path = None,
 ) -> Tuple[Dict[str, float], List[Dict]]:
     """
@@ -471,6 +493,18 @@ def evaluate_baseline(
                     output_path=sample_path
                 )
                 saved_count += 1
+            
+            # Save TXT predictions
+            if save_txt and output_dir:
+                label_dir = output_dir / "labels"
+                label_dir.mkdir(parents=True, exist_ok=True)
+                txt_path = label_dir / f"{Path(image_paths[b]).stem}.txt"
+                with open(txt_path, "w") as f:
+                    for box, score in zip(pred_box_yolo.cpu(), pred_score.cpu()):
+                        if score > 0: # Only save if we have detections
+                            cx, cy, w, h = box.tolist()
+                            # Format: class_id score cx cy w h
+                            f.write(f"0 {score:.6f} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n")
     
     metrics = evaluator.compute_metrics()
     return metrics, predictions
@@ -539,6 +573,12 @@ def main():
             model.load_coop_weights(args.coop_weights)
         else:
             print("WARNING: No CoOp weights provided, using random initialization")
+            
+        # Debug: Print CoOp context stats
+        ctx_mean = model.coop.ctx.mean().item()
+        ctx_std = model.coop.ctx.std().item()
+        print(f"DEBUG: CoOp Context Stats - Mean: {ctx_mean:.6f}, Std: {ctx_std:.6f}")
+        print(f"DEBUG: CoOp Context Device: {model.coop.ctx.device}")
         
         metrics, predictions = evaluate_coop(
             model=model,
@@ -547,6 +587,7 @@ def main():
             confidence_threshold=args.confidence_threshold,
             iou_threshold=args.iou_threshold,
             save_samples=args.save_samples,
+            save_txt=args.save_txt,
             output_dir=output_dir,
         )
     
